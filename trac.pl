@@ -5,9 +5,6 @@
 # 
 # 0.1 - initial release
 
-&foreign_require("virtualmin-svn", "virtualmin-svn-lib.pl");
-%sconfig = &foreign_config("virtual-server-svn");
-
 # script_trac_desc()
 sub script_trac_desc
 {
@@ -45,6 +42,7 @@ local ($d, $ver) = @_;
 &has_command("python") || return "The python command is not installed";
 &has_command("svn") || return "The svn command is not installed";
 &require_apache();
+$d->{'virtualmin-svn'} || return "The SVN plugin is not enabled for this domain";
 local $conf = &apache::get_config();
 local $got_rewrite;
 foreach my $l (&apache::find_directive("LoadModule", $conf)) {
@@ -76,6 +74,7 @@ if ($upgrade) {
 	$rv .= &ui_table_row("Trac admin user", $upgrade->{'opts'}->{'tracadmin'});
 	}
 else {
+	&foreign_require("virtualmin-svn", "virtualmin-svn-lib.pl");
 	# Show editable install options
 	local @dbs = &domain_databases($d, [ "mysql", "postgres" ]);
 	local @reps = &virtualmin_svn::list_reps($d);
@@ -239,7 +238,6 @@ if ($?) {
 	}
 
 if (!$upgrade) {
-	$sconfig{'auth'} ||= "Basic";
 	# Create the initial project
 	local $dbhosttrac = "localhost" if $dbhost eq undef;
 	local $projectdir = $opts->{'dir'}."/".$opts->{'project'};
@@ -319,6 +317,9 @@ if (!-r $wrapper) {
 	}
 
 # Add <Location> block to Apache config
+&foreign_require("virtualmin-svn", "virtualmin-svn-lib.pl");
+%sconfig = &foreign_config("virtualmin-svn");
+$sconfig{'auth'} ||= "Basic";
 local $conf = &apache::get_config();
 local @ports = ( $d->{'web_port'},
 		 $d->{'ssl'} ? ( $d->{'web_sslport'} ) : ( ) );
