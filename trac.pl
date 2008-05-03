@@ -5,6 +5,7 @@
 # 
 # 0.1 - initial release
 # 0.1.1 - some fixes with dependencies for virtualmin-svn
+# 0.1.2 - fixes for postgres installation errors
 
 # script_trac_desc()
 sub script_trac_desc
