@@ -185,7 +185,6 @@ local ($dbtype, $dbname) = split(/_/, $opts->{'db'}, 2);
 local $dbuser = $dbtype eq "mysql" ? &mysql_user($d) : &postgres_user($d);
 local $dbpass = $dbtype eq "mysql" ? &mysql_pass($d) : &postgres_pass($d, 1);
 local $dbhost = &get_database_host($dbtype);
-$dbhost = undef if ($dbhost eq "localhost" || $dbhost eq "127.0.0.1");
 if ($dbtype) {
 	local $dberr = &check_script_db_connection($dbtype, $dbname,
 						   $dbuser, $dbpass);
@@ -239,12 +238,15 @@ if ($?) {
 	}
 
 if (!$upgrade) {
+	# Fix database name
+	if ($dbtype eq 'postgres') {
+	  $dbhost = "";
+	  }
 	# Create the initial project
-	local $dbhosttrac = "localhost" if $dbhost eq undef;
 	local $projectdir = $opts->{'dir'}."/".$opts->{'project'};
 	local $icmd = "cd ".quotemeta($opts->{'dir'})." && ".
 		  "./bin/trac-admin ".$projectdir." initenv ".$opts->{'project'}." ".
-		  $dbtype."://".$dbuser.":".$dbpass."@".$dbhosttrac."/".$dbname.
+		  $dbtype."://".$dbuser.":".$dbpass."@".$dbhost."/".$dbname.
 		  " svn ".$d->{'home'}."/svn/".$opts->{'rep'}." 2>&1 && ".
 		  "./bin/trac-admin ".$projectdir." permission add ".
 		  $opts->{'tracadmin'}." TRAC_ADMIN 2>&1";
@@ -256,11 +258,11 @@ if (!$upgrade) {
 	# Fix trac.ini
 	local $url = &script_path_url($d, $opts);
 	local $sfile = "$projectdir/conf/trac.ini";
-	local ($dbtype, $dbname) = split(/\//, $opts->{'rep'}, -1);
 	-r $sfile || return (0, "Trac settings file $sfile was not found");
 	local $lref = &read_file_lines($sfile);
 	local $url = &script_path_url($d, $opts);
-	local $adminpath = $opts->{'path'} eq "/" ? "/admin" : "$opts->{'path'}/admin";
+	local $adminpath = $opts->{'path'} eq "/" ?
+		  "/admin" : "$opts->{'path'}/admin";
 	my $i = 0;
 	foreach my $l (@$lref) {
 	  if ($l =~ /authz_file\s*=/) {
