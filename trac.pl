@@ -4,6 +4,7 @@
 # Changelog
 # 
 # 0.1 - initial release
+# 0.1.1 - some fixes with dependencies for virtualmin-svn
 
 # script_trac_desc()
 sub script_trac_desc
