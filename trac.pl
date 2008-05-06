@@ -3,9 +3,11 @@
 #
 # Changelog
 # 
-# 0.1 - initial release
+# 0.1   - initial release
 # 0.1.1 - some fixes with dependencies for virtualmin-svn
 # 0.1.2 - fixes for postgres installation errors
+# 0.2   - now uses <Location> instead of ScriptAlias directives for
+#         compatibility reasons (a.k.a don't destroy other install scripts)
 
 # script_trac_desc()
 sub script_trac_desc
@@ -330,8 +332,38 @@ local @ports = ( $d->{'web_port'},
 foreach my $port (@ports) {
 	local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
 	next if (!$virt);
+	# enable the rewrite engine for the whol virtual host, because only then
+	# SCRIPT_URL gets populated that Trac uses to build the URL
+	local @rewrite = &apache::find_directive("RewriteEngine", $vconf);
+	local ($tr) = grep { $_ =~ /On/ } @rewrite;
+	if (!$tr) {
+		push(@rewrite, "On");
+		&apache::save_directive("RewriteEngine", \@rewrite, $vconf, $conf);
+		}
+	local @locs = &apache::find_directive_struct("Location", $vconf);
+	local ($loc) = grep { $_->{'words'}->[0] eq $opts->{'path'} } @locs;
+	local $reldir = $opts->{'dir'};
+	$reldir =~ s/^\Q$d->{'home'}\/\E//;
+	if (!$loc) {
+		local $loc = { 'name' => 'Location',
+				   'value' => $opts->{'path'},
+				   'type' => 1,
+				   'members' => [
+				{ 'name' => 'AddHandler',
+				  'value' => 'fcgid-script .fcgi' },
+				{ 'name' => 'RewriteEngine',
+				  'value' => 'On' },
+				{ 'name' => 'RewriteCond',
+				  'value' => '%{REQUEST_FILENAME} !-f' },
+				{ 'name' => 'RewriteCond',
+				  'value' => '%{REQUEST_FILENAME} !trac.fcgi' },
+				{ 'name' => 'RewriteRule',
+				  'value' => "$reldir(.*) trac.fcgi/\$1 [L]" },
+				]
+			};
+		&apache::save_directive_struct(undef, $loc, $vconf, $conf);
+		}
 	local $passwd_file = &virtualmin_svn::passwd_file($d);
-	local $ap = $opts->{'path'} eq "/" ? "/login" : "$opts->{'path'}/login";
 	local $at = $sconfig{'auth'};
 	local $auf = $at eq "Digest" && $apache::httpd_modules{'core'} < 2.2 ?
 			"AuthDigestFile" : "AuthUserFile";
@@ -339,33 +371,27 @@ foreach my $port (@ports) {
 			"AuthDigestProvider" : "";
 	local $adv = $at eq "Digest" && $apache::httpd_modules{'core'} >= 2.2 ?
 			"file" : "";
-	local @sa = &apache::find_directive("ScriptAlias", $vconf);
-	local ($tc) = grep { $_ =~ /^\$opts->{'path'}/ } @sa;
-	if (!$tc) {
-		push(@sa, "$opts->{'path'} $fcgi/");
-		&apache::save_directive("ScriptAlias", \@sa,
-					$vconf, $conf);
+	local @locms = &apache::find_directive_struct("LocationMatch", $vconf);
+	local ($login) = grep { $_->{'words'}->[0] eq ".*/login" } @locms;
+	if (!$login) {
+		local $login = { 'name' => 'LocationMatch',
+				   'value' => ".*/login",
+				   'type' => 1,
+				   'members' => [
+				{ 'name' => 'AuthType',
+				  'value' => "$at" },
+				{ 'name' => 'AuthName',
+				  'value' => "$d->{'dom'}" },
+				{ 'name' => "$auf",
+				  'value' => "$passwd_file" },
+				{ 'name' => "$adp",
+				  'value' => "$adv" },
+				{ 'name' => 'Require',
+				  'value' => 'valid-user' },
+				]
+			};
+		&apache::save_directive_struct(undef, $login, $vconf, $conf);
 		}
-	local @locs = &apache::find_directive_struct("Location", $vconf);
-	local ($loc) = grep { $_->{'words'}->[0] eq $ap } @locs;
-	next if ($loc);
-	local $loc = { 'name' => 'Location',
-			   'value' => "$ap",
-			   'type' => 1,
-			   'members' => [
-			{ 'name' => 'AuthType',
-			  'value' => "$at" },
-			{ 'name' => 'AuthName',
-			  'value' => "$d->{'dom'}" },
-			{ 'name' => "$auf",
-			  'value' => "$passwd_file" },
-			{ 'name' => "$adp",
-			  'value' => "$adv" },
-			{ 'name' => 'Require',
-			  'value' => 'valid-user' },
-			]
-		};
-	&apache::save_directive_struct(undef, $loc, $vconf, $conf);
 	&flush_file_lines($virt->{'file'});
 	}
 &register_post_action(\&restart_apache);
@@ -388,7 +414,7 @@ local ($d, $version, $opts) = @_;
 local $derr = &delete_script_install_directory($d, $opts);
 return (0, $derr) if ($derr);
 
-# Remove base Django tables from the database
+# Remove base Trac tables from the database
 local ($dbtype, $dbname) = split(/_/, $opts->{'db'}, 2);
 if ($dbtype eq 'mysql') {
 	&require_mysql();
@@ -405,7 +431,7 @@ else {
 		}
 	}
 
-# Remove <Location> block
+# Remove <Location> and <LocationMatch> block
 &require_apache();
 local $conf = &apache::get_config();
 local @ports = ( $d->{'web_port'},
@@ -413,11 +439,16 @@ local @ports = ( $d->{'web_port'},
 foreach my $port (@ports) {
 	local ($virt, $vconf) = &get_apache_virtual($d->{'dom'}, $port);
 	next if (!$virt);
-	local $ap = $opts->{'path'} eq "/" ? "/login" : "$opts->{'path'}/login";
 	local @locs = &apache::find_directive_struct("Location", $vconf);
-	local ($loc) = grep { $_->{'words'}->[0] eq $ap } @locs;
-	next if (!$loc);
-	&apache::save_directive_struct($loc, undef, $vconf, $conf);
+	local ($loc) = grep { $_->{'words'}->[0] eq $opts->{'path'} } @locs;
+	if ($loc) {
+		&apache::save_directive_struct($loc, undef, $vconf, $conf);
+	}
+	local @locms = &apache::find_directive_struct("LocationMatch", $vconf);
+	local ($login) = grep { $_->{'words'}->[0] eq ".*/login" } @locms;
+	if ($login) {
+		&apache::save_directive_struct($login, undef, $vconf, $conf);
+	}
 	&flush_file_lines($virt->{'file'});
 	}
 &register_post_action(\&restart_apache);
